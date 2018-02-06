@@ -33,6 +33,7 @@
 #include <netinet/ip6.h>
 #include <openssl/evp.h>
 #include <errno.h>
+#include <err.h>
 #include <limits.h>
 #include <getopt.h>
 #include <stdbool.h>
@@ -355,8 +356,9 @@ int add_flow(char *ip_src, char *ip_dst, char *crypt_name, char *auth_name, char
   flow->auth_name = strdup(auth_name);
   flow->key = dec_key;
 
-  EVP_CIPHER_CTX ctx;
-  EVP_CIPHER_CTX_init(&ctx);
+  EVP_CIPHER_CTX *ctx;
+  ctx = EVP_CIPHER_CTX_new();
+  EVP_CIPHER_CTX_init(ctx);
   flow->ctx = ctx;
 
   // Adding to linked list
@@ -749,7 +751,8 @@ void process_esp_packet(u_char const *payload, const int payload_len, pcap_hdr *
   char ip_src[INET_ADDRSTRLEN+1];
   char ip_dst[INET_ADDRSTRLEN+1];
   llflow_t *flow = NULL;
-  EVP_CIPHER_CTX ctx;
+  EVP_CIPHER_CTX *ctx;
+  ctx = EVP_CIPHER_CTX_new();
   const EVP_CIPHER *cipher = NULL;
   int packet_size, rc, len, remaining;
   int ivlen;
@@ -827,7 +830,7 @@ void process_esp_packet(u_char const *payload, const int payload_len, pcap_hdr *
     if ((cipher = EVP_get_cipherbyname(flow->crypt_method->openssl_cipher)) == NULL)
       error("Cannot find cipher %s - EVP_get_cipherbyname() err", flow->crypt_method->openssl_cipher);
 
-    EVP_CIPHER_CTX_init(&ctx);
+    EVP_CIPHER_CTX_init(ctx);
 
     // Copy initialization vector
     ivlen = EVP_CIPHER_iv_length(cipher);
@@ -835,7 +838,7 @@ void process_esp_packet(u_char const *payload, const int payload_len, pcap_hdr *
     memcpy(&esp_packet.iv, payload_src, ivlen);
     payload_src += ivlen;
 
-    rc = EVP_DecryptInit_ex(&ctx, cipher,NULL, flow->key, esp_packet.iv);
+    rc = EVP_DecryptInit_ex(ctx, cipher,NULL, flow->key, esp_packet.iv);
     if (rc != 1) {
       error("Error during the initialization of crypto system. Please report this bug with your .pcap file");
     }
@@ -853,7 +856,7 @@ void process_esp_packet(u_char const *payload, const int payload_len, pcap_hdr *
     }
 
     // Do the decryption work
-    rc = EVP_DecryptUpdate(&ctx, payload_dst, &len, payload_src, remaining);
+    rc = EVP_DecryptUpdate(ctx, payload_dst, &len, payload_src, remaining);
     packet_size += len;
 
     if (rc != 1) {
@@ -863,16 +866,16 @@ void process_esp_packet(u_char const *payload, const int payload_len, pcap_hdr *
         return;
     }
 
-    EVP_DecryptFinal_ex(&ctx, payload_dst+len, &len);
+    EVP_DecryptFinal_ex(ctx, payload_dst+len, &len);
     packet_size += len;
 
     // http://www.mail-archive.com/openssl-users@openssl.org/msg23434.html
-    packet_size +=EVP_CIPHER_CTX_block_size(&ctx);
+    packet_size +=EVP_CIPHER_CTX_block_size(ctx);
 
     u_char *pad_len = (new_packet_payload + packet_size -2);
 
     // Detect obviously badly decrypted packet
-    if (*pad_len >=  EVP_CIPHER_CTX_block_size(&ctx)) {
+    if (*pad_len >=  EVP_CIPHER_CTX_block_size(ctx)) {
       verbose("Warning: invalid pad_len field, wrong encryption key ? copying raw packet...\n");
       process_nonip_packet(payload, payload_len, new_packet_hdr, new_packet_payload);
       return;
@@ -886,7 +889,7 @@ void process_esp_packet(u_char const *payload, const int payload_len, pcap_hdr *
 
     new_packet_hdr->len = packet_size;
 
-    EVP_CIPHER_CTX_cleanup(&ctx);
+    EVP_CIPHER_CTX_cleanup(ctx);
 
     } /*  flow->crypt_method->openssl_cipher == NULL */
 
